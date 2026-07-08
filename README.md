@@ -80,18 +80,14 @@ The database is built on a synthetic dataset modeled after the official **KSP FI
 
 ### Installation
 1. **Clone the repository:**
-   ```bash
+   
    git clone https://github.com/prajval26112005-arch/ksp-crime-intelligence.git
    cd ksp-crime-intelligence
-Install project dependencies:
-
-bash
+2. Install project dependencies:
 npm install
 Start the local development server:
-
-bash
-npm run dev
-Access the application: Open http://localhost:5173 in your browser.
+3. npm run dev
+4. Access the application: Open https://ksp-crime-intelligence-prajval.onslate.in/ in your browser.
 
 🗂️ Dataset Schema Coverage
 The simulated dataset mimics real-world database schemas, supporting mock SQL logging:
