@@ -139,10 +139,12 @@ The simulated dataset mimics real-world database schemas, supporting mock SQL lo
 ---
 
 ## 👥 Team Prism Talons
+
 *Sapthagiri NPS University, Bangalore*
-* **Prajval M** — AI Integration & Architecture
-* **Prem H R** — Frontend Development
-* **Prakash Patel** — UI/UX & Presentation
+
+* **Prajval** — AI Integration & Architecture
+* **Prem H R** — Frontend Development & UI/UX
+* **Prakash Patel** — Backend & Presentation
 
 ---
 <p align="center">Built with ❤️ by Team Prism Talons for the SCRB Datathon Challenge</p>
