@@ -14,7 +14,7 @@ const IconClose = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 );
 
-export default function DashboardPanel({ onNavigateToTab }) {
+export default function DashboardPanel({ onNavigateToTab, user }) {
   const [filterDistrict, setFilterDistrict] = useState('All');
   const [dashboardTab, setDashboardTab] = useState('telemetry'); // 'telemetry' | 'sociological' | 'investigator'
   const [selectedCaseId, setSelectedCaseId] = useState('10443'); // Default case for investigator portal
@@ -133,9 +133,20 @@ export default function DashboardPanel({ onNavigateToTab }) {
       
       {/* Top Navigation Row */}
       <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.85rem 1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h2 style={{ fontSize: '1.3rem', fontFamily: 'var(--font-display)' }}>KSP Analytical Nexus</h2>
-          <p style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))' }}>Crime telemetry, socio-demographic correlation indexes, and decision support models</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          {user?.photoURL && (
+            <img 
+              src={user.photoURL} 
+              alt="Profile" 
+              style={{ width: '40px', height: '40px', borderRadius: '50%', border: '2px solid hsl(var(--color-indigo))', objectFit: 'cover' }} 
+            />
+          )}
+          <div>
+            <h2 style={{ fontSize: '1.3rem', fontFamily: 'var(--font-display)' }}>KSP Analytical Nexus</h2>
+            <p style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))' }}>
+              Welcome back, <strong>{user?.displayName || user?.username}</strong> {user?.email && `(${user.email})`}
+            </p>
+          </div>
         </div>
 
         {/* Inner Tab Controllers */}

@@ -37,20 +37,39 @@ There is a critical need for an intuitive, secure interface that allows officers
 | 📄 **Native PDF Export** | Optimized `@media print` layout styles to export clean, watermark-certified intelligence reports via browser print (`window.print()`). |
 
 ---
-🏗️ Architecture
 
-User (Voice / Text)
-        ↓
-  React Frontend (Vite + Tailwind)
-        ↓
-  Claude AI API (claude-sonnet-4-6)
-  ← Synthetic KSP FIR Dataset (mirrors real SCRB schema) →
-        ↓
-  Response + Visualization
-  (Recharts / react-force-graph / Leaflet)
-        ↓
-  PDF Export (jsPDF)
+## 🆕 Latest Updates
 
+### v2.0 — Pre-Submission Build
+
+1. **Firebase Google SSO** — Real Google Authentication via Firebase Auth. 
+   Investigators authenticate with real Google credentials; display name, 
+   photo and email appear in the dashboard header and sidebar.
+
+2. **Live Gemini AI Integration** — Interactive chat with live Gemini API. 
+   Officers configure their own API key (saved in localStorage or loaded 
+   via .env). Includes animated typing indicator and error overlays.
+
+3. **Criminal Network CRUD** — Full Add/Edit/Remove operations on suspect 
+   nodes and link connections in the SVG network graph, with input 
+   validation and real-time success alerts.
+
+4. **Build Configuration** — Fixed base routing in vite.config.js for 
+   correct deployment across environments.
+
+---
+
+## 🏗️ Architecture & Data Flow
+```
+User (Voice/Text)
+       ↓
+React 19 Frontend (Vite 8 + CSS variables for dark-mode glassmorphism)
+       ↓
+CCTNS-NLPE Mock Routing Engine & Context Stack Resolver
+  ← Synthetic KSP Dataset (mirrors CCTNS ER Schema: CaseMaster, Accused, Victim, etc.) →
+       ↓
+Interactive SVG Visualizations, Leaflet GIS Maps, & Print Engine
+```
 
 The database is built on a synthetic dataset modeled after the official **KSP FIR Entity-Relationship (ER) Diagram** released by the SCRB, including:
 * **CaseMaster:** FIR records with coordinates, crime type, gravity, and status.
@@ -80,33 +99,52 @@ The database is built on a synthetic dataset modeled after the official **KSP FI
 
 ### Installation
 1. **Clone the repository:**
-   
+   ```bash
    git clone https://github.com/prajval26112005-arch/ksp-crime-intelligence.git
    cd ksp-crime-intelligence
-2. Install project dependencies:
-npm install
-Start the local development server:
-3. npm run dev
-4. Access the application: Open https://ksp-crime-intelligence-prajval.onslate.in/ in your browser.
+   ```
 
-🗂️ Dataset Schema Coverage
+2. **Install project dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Start the local development server:**
+   ```bash
+   npm run dev
+   ```
+
+4. **Access the application:**
+   Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+---
+
+## 🗂️ Dataset Schema Coverage
 The simulated dataset mimics real-world database schemas, supporting mock SQL logging:
+* `CaseMaster` — Case details, dates, IPC sections, and beats.
+* `Accused / Victim` — Profiles with recidivism risk indices.
+* `ActSectionAssociation` — IPC section mappings (e.g. IPC 379 - Theft, IPC 302 - Murder).
+* `District / Unit / Employee` — Station registries for all 31 districts.
 
-CaseMaster — Case details, dates, IPC sections, and beats.
-Accused / Victim — Profiles with recidivism risk indices.
-ActSectionAssociation — IPC section mappings (e.g. IPC 379 - Theft, IPC 302 - Murder).
-District / Unit / Employee — Station registries for all 31 districts.
-⚠️ Disclaimer: All data in this application is synthetically generated for demonstration purposes. No real citizen or confidential KSP case records are used.
+*⚠️ **Disclaimer:** All data in this application is synthetically generated for demonstration purposes. No real citizen or confidential KSP case records are used.*
 
-🔮 Future Scope
-Live Database Integration: Connect to CCTNS/SCRB production tables through a secure, encrypted API gateway.
-Mobile Field App: Mobile-optimized viewports with local database synchronization and offline capabilities for beat officers.
-Machine Learning Pipeline: Implement predictive ML models (like XGBoost or Random Forests) to forecast crime hotspots on weekly indices.
-Handwritten OCR Integration: Scan physical Kannada/English FIR documents to auto-ingest text fields.
-👥 Team Prism Talons
-Sapthagiri NPS University, Bangalore
+---
 
-Prajval M — AI Integration & Architecture
-Prem H R  -  Data & Visualization
-Prakash Patel— UI/UX & Presentation
-Built with ❤️ by Team Prism Talons for the SCRB Datathon Challenge
+## 🔮 Future Scope
+* **Live Database Integration:** Connect to CCTNS/SCRB production tables through a secure, encrypted API gateway.
+* **Mobile Field App:** Mobile-optimized viewports with local database synchronization and offline capabilities for beat officers.
+* **Machine Learning Pipeline:** Implement predictive ML models (like XGBoost or Random Forests) to forecast crime hotspots on weekly indices.
+* **Handwritten OCR Integration:** Scan physical Kannada/English FIR documents to auto-ingest text fields.
+
+---
+
+## 👥 Team Prism Talons
+*Sapthagiri NPS University, Bangalore*
+* **Prajval** — AI Integration & Architecture
+* **Poorvik Rawath** — Frontend Development
+* **Pragathi Gowda** — Data & Visualization
+* **Prateek Salien** — Backend & Dataset
+* **Prem H R** — UI/UX & Presentation
+
+---
+<p align="center">Built with ❤️ by Team Prism Talons for the SCRB Datathon Challenge</p>

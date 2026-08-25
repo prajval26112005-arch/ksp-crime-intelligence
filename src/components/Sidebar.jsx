@@ -178,23 +178,31 @@ export default function Sidebar({ currentTab, setCurrentTab, user, onLogout, ses
       }}>
         {/* User Card */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-          <div style={{
-            width: '36px',
-            height: '36px',
-            borderRadius: '50%',
-            background: 'hsl(var(--bg-card-hover))',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 'bold',
-            color: 'hsl(var(--color-indigo))',
-            fontSize: '0.9rem'
-          }}>
-            {user.username ? user.username[0].toUpperCase() : 'O'}
-          </div>
+          {user.photoURL ? (
+            <img 
+              src={user.photoURL} 
+              alt={user.displayName || user.username} 
+              style={{ width: '36px', height: '36px', borderRadius: '50%', border: '2px solid hsl(var(--color-indigo))', objectFit: 'cover' }} 
+            />
+          ) : (
+            <div style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '50%',
+              background: 'hsl(var(--bg-card-hover))',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 'bold',
+              color: 'hsl(var(--color-indigo))',
+              fontSize: '0.9rem'
+            }}>
+              {user.displayName ? user.displayName[0].toUpperCase() : (user.username ? user.username[0].toUpperCase() : 'O')}
+            </div>
+          )}
           <div style={{ overflow: 'hidden' }}>
-            <h4 style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'white' }}>
-              {user.username}
+            <h4 style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'white' }} title={user.displayName || user.username}>
+              {user.displayName || user.username}
             </h4>
             <span 
               className={`badge badge-${getRoleBadgeClass(user.role)}`}

@@ -104,19 +104,21 @@ export default function App() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        minHeight: '100vh',
+        height: '100vh',
         width: '100vw',
         position: 'fixed',
         top: 0,
         left: 0,
         background: 'hsl(var(--bg-primary))',
         zIndex: 1000,
-        padding: '1.5rem'
+        overflowY: 'auto',
+        padding: '2rem 1.5rem'
       }}>
         <div className="glass-panel animate-pulse-border" style={{
           maxWidth: '420px',
           width: '100%',
-          padding: '2.5rem 2rem',
+          margin: 'auto',
+          padding: '2rem 2rem',
           textAlign: 'center',
           border: '1px solid hsla(var(--color-rose), 0.3)',
           boxShadow: 'var(--shadow-glow-rose)'
@@ -127,7 +129,7 @@ export default function App() {
             borderRadius: '50%',
             background: 'hsla(var(--color-rose), 0.1)',
             color: 'hsl(var(--color-rose))',
-            margin: '0 auto 1.5rem',
+            margin: '0 auto 1rem',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -138,10 +140,10 @@ export default function App() {
             🔒
           </div>
 
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', marginBottom: '0.5rem' }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', marginBottom: '0.25rem' }}>
             Terminal Locked
           </h2>
-          <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+          <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
             Officer: <strong>{user.username}</strong> ({user.role}) <br/>
             Enter your credentials to resume session.
           </p>
@@ -216,7 +218,7 @@ export default function App() {
         
         {/* Navigation router views */}
         {currentTab === 'dashboard' && (
-          <DashboardPanel onNavigateToTab={onNavigateToTab} />
+          <DashboardPanel onNavigateToTab={onNavigateToTab} user={user} />
         )}
         
         {currentTab === 'gis' && (

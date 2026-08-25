@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { mockChatBotResponses, getFallbackResponse, accusedProfiles, mockFIRs, districtsData, financialTransactions } from '../data/mockData';
 
 // Custom SVG Icons
 const IconMic = () => (
@@ -41,15 +40,20 @@ export default function ChatbotPanel({ user, addAuditLog }) {
   const [isSpeakingEnabled, setIsSpeakingEnabled] = useState(false);
   const [selectedAIExplain, setSelectedAIExplain] = useState(null);
   const [voiceError, setVoiceError] = useState('');
-  
-  // Sliding Context Stack: type = 'offender' | 'case' | 'location', name = '...', id = '...'
+  const [apiError, setApiError] = useState('');
   const [activeContext, setActiveContext] = useState(null);
+  
+  // API Key states
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('VITE_GEMINI_API_KEY') || '');
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [showKeyText, setShowKeyText] = useState(false);
+  const [isBotTyping, setIsBotTyping] = useState(false);
   
   const chatEndRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isBotTyping]);
 
   // Clean up any active speech synthesis on unmount
   useEffect(() => {
@@ -72,20 +76,108 @@ export default function ChatbotPanel({ user, addAuditLog }) {
   const speakText = (text) => {
     if (!isSpeakingEnabled || !window.speechSynthesis) return;
     
-    // Cancel current speaking
     window.speechSynthesis.cancel();
     
     const utterance = new SpeechSynthesisUtterance(text);
     if (language === 'Kannada') {
       utterance.lang = 'kn-IN';
     } else {
-      utterance.lang = 'en-IN'; // Indian-English accent
+      utterance.lang = 'en-IN';
     }
     window.speechSynthesis.speak(utterance);
   };
 
+  const callGeminiAPI = async (resolvedQuery) => {
+    const startTime = Date.now();
+    const systemPrompt = `
+You are the Karnataka State Police (KSP) Crime Intelligence Assistant.
+You have access to a simulated CCTNS (Crime and Criminal Tracking Network & Systems) relational database.
+
+DATABASE SCHEMA:
+1. CaseMaster (CaseNo, CrimeNo, District, UnitName, Sections, Accused, Victims, Status, BriefFacts)
+2. Accused (AccusedID, AccusedName, AgeYear, Gender, Alias, ArrestsCount, ModusOperandi, RiskScore, RecidivismTier, ActiveArea)
+3. BankAccounts (BankName, BranchName, AccountNo, Balance, RiskFlag, OwnerName)
+
+KNOWN DATA INSIGHTS (Grounded Entities):
+- Rowdy Raju: Real Name: Raju Gowda. Alias: "Rowdy Raju". Age: 34. Modus Operandi: Violent Extortion. Risk: 88 (Critical). Active Area: Bengaluru Urban (Majestic). Arrests: 14. Accounts: SBI Majestic (Bal: ₹2,500,000, Flag: RED). Case: FIR 10443 (CR-14/2026, Jayanagar PS).
+- Kiran Tech: Real Name: Kiran Kumar. Alias: "Kiran Tech". Age: 26. Modus Operandi: Cyber Phishing & Money Laundering. Risk: 40 (Low). Active Area: Bengaluru Urban (Whitefield). Arrests: 1. Accounts: HDFC Whitefield (Bal: ₹7,800,000, Flag: RED). Case: FIR 20261 (CR-32/2026, Whitefield Cyber PS).
+- Tiger Naga: Real Name: Nagaraj Naik. Alias: "Tiger Naga". Age: 45. Modus Operandi: Armed Robbery. Risk: 95 (Critical). Active Area: Mysuru & Kalaburagi. Arrests: 22. Case: FIR 10444 (CR-88/2025).
+- Sunil Fence: Real Name: Sunil Gowda. Alias: "Sunil Fence". Age: 41. Modus Operandi: Burglary & Fencing Stolen Goods. Risk: 62 (High). Active Area: Tumakuru (Kyathsandra). Arrests: 7. Case: FIR 10445 (CR-12/2026).
+- Sameer: Real Name: Sameer Khan. Alias: "Sameer Chhota". Age: 29. Modus Operandi: Chain Snatching. Risk: 78 (High). Active Area: Kalaburagi (Super Market). Arrests: 9. Case: FIR 30810 (CR-95/2026, Super Market PS).
+
+INSTRUCTIONS:
+1. Answer the user's query in both English (textEnglish) and Kannada (textKannada).
+2. The response must sound professional, administrative, and helpful to a police investigator.
+3. Translate names and technical terms accurately in Kannada (e.g. Rowdy Raju -> ರೌಡಿ ರಾಜು, Extortion -> ಸುಲಿಗೆ/ಬೆದರಿಕೆ, Active Investigation -> ಸಕ್ರಿಯ ತನಿಖೆ).
+4. Provide a valid SQL query that would retrieve the relevant data (sqlQuery) based on the schemas above.
+5. Provide a confidence score (confidenceScore) between 0.0 and 1.0.
+6. List the tables queried in sourcesAudited (e.g. "CaseMaster, Accused").
+7. Name the rules or logical paths evaluated in rulesTriggered (e.g. "Semantic Offender Lookup").
+
+Return EXACTLY a JSON object with these keys:
+{
+  "textEnglish": "string response",
+  "textKannada": "ಕನ್ನಡದಲ್ಲಿ ಪ್ರತಿಕ್ರಿಯೆ",
+  "sqlQuery": "SELECT ...",
+  "confidenceScore": 0.95,
+  "rulesTriggered": "rules evaluated description",
+  "sourcesAudited": "tables audited"
+}
+Do not wrap in markdown block, return raw JSON string. Do not include any text before or after the JSON.
+`;
+
+    const prompt = `${systemPrompt}\nUser Query: ${resolvedQuery}`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }]
+        })
+      }
+    );
+    const data = await response.json();
+
+    // Safe parsing with error checking
+    if (data.error) {
+      throw new Error(data.error.message);
+    }
+
+    if (!data.candidates || data.candidates.length === 0) {
+      throw new Error("No response from Gemini");
+    }
+
+    const reply = data.candidates[0].content.parts[0].text;
+
+    let cleanedReply = reply.trim();
+    if (cleanedReply.startsWith("```")) {
+      cleanedReply = cleanedReply.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
+    }
+
+    const jsonParsed = JSON.parse(cleanedReply);
+    const executionTimeMs = Date.now() - startTime;
+
+    return {
+      sender: 'bot',
+      textEnglish: jsonParsed.textEnglish,
+      textKannada: jsonParsed.textKannada,
+      explainableAI: {
+        sqlQuery: jsonParsed.sqlQuery || '-- No Query Generated',
+        confidenceScore: typeof jsonParsed.confidenceScore === 'number' ? jsonParsed.confidenceScore : 0.9,
+        rulesTriggered: jsonParsed.rulesTriggered || 'Generative NLP Inference',
+        sourcesAudited: jsonParsed.sourcesAudited || 'CCTNS Database Schema',
+        executionTimeMs: executionTimeMs
+      }
+    };
+  };
+
   const handleSearch = (queryText) => {
     if (!queryText.trim()) return;
+    setApiError('');
 
     const originalQuery = queryText;
     let processedQuery = queryText.toLowerCase();
@@ -127,176 +219,46 @@ export default function ChatbotPanel({ user, addAuditLog }) {
 
     addAuditLog(`Chatbot query: "${originalQuery}" (Context Resolved: "${contextResolvedQuery}")`);
 
-    // AI Logic search
-    setTimeout(() => {
-      const lowerResolved = contextResolvedQuery.toLowerCase();
-      let matchedResponse = null;
-      let newContext = null;
-
-      // 1. Check for specific Case IDs
-      if (lowerResolved.includes("10443") || lowerResolved.includes("extortion case")) {
-        matchedResponse = mockChatBotResponses.find(r => r.keywords.includes("fir 10443"));
-        newContext = { type: 'case', name: '10443', id: 'FIR_10443' };
-      } else if (lowerResolved.includes("20261") || lowerResolved.includes("cyber case")) {
-        matchedResponse = mockChatBotResponses.find(r => r.keywords.includes("fir 20261"));
-        newContext = { type: 'case', name: '20261', id: 'FIR_20261' };
-      } else if (lowerResolved.includes("30810") || lowerResolved.includes("chain snatching")) {
-        // Build a dynamic response for Case 30810 from FIR list
-        const caseObj = mockFIRs.find(f => f.caseNo === "30810");
-        matchedResponse = {
-          englishResponse: `FIR Case No: 30810 (Super Market Police Station, Case No. CR-95/2026). Charge: Chain Snatching (IPC Sec 379). Accused: Sameer 'Chhota'. Victim: Deepa Gowda. Status: Under Active Investigation. Getaway getaway motorcycle fleeing to Afzalpur Cross.`,
-          kannadaResponse: `ಎಫ್‌ಐಆರ್ ಸಂಖ್ಯೆ: ೩೦೮೧೦ (ಸೂಪರ್ ಮಾರ್ಕೆಟ್ ಠಾಣೆ). ಆರೋಪ: ಸರಗಳ್ಳತನ (IPC Sec 379). ಆರೋಪಿ: ಸಮೀರ್ ಚೋಟಾ. ಬಲಿಪಶು: ದೀಪಾ ಗೌಡ. ಸ್ಥಿತಿ: ತನಿಖೆಯಲ್ಲಿದೆ.`,
-          explainableAI: {
-            sqlQuery: `SELECT * FROM CaseMaster WHERE CaseNo = '30810';`,
-            confidenceScore: 0.98,
-            rulesTriggered: "Direct Case ID Match Rule",
-            sourcesAudited: "CaseMaster, Accused, Victim",
-            executionTimeMs: 5
-          }
-        };
-        newContext = { type: 'case', name: '30810', id: 'FIR_30810' };
-      }
-      
-      // 2. Case contextual details lookup
-      if (!matchedResponse && activeContext && activeContext.type === 'case') {
-        const activeCase = mockFIRs.find(f => f.caseNo === activeContext.name);
-        if (activeCase) {
-          if (lowerResolved.includes("status")) {
-            matchedResponse = {
-              englishResponse: `Investigation Status for Case ${activeContext.name}: "${activeCase.status}". Detailed briefs: ${activeCase.briefFacts}`,
-              kannadaResponse: `ಪ್ರಕರಣ ${activeContext.name} ನ ತನಿಖಾ ಸ್ಥಿತಿ: "${activeCase.status}".`,
-              explainableAI: {
-                sqlQuery: `SELECT Status, BriefFacts FROM CaseMaster WHERE CaseNo = '${activeContext.name}';`,
-                confidenceScore: 0.98,
-                rulesTriggered: "Context-Aware Column Lookup [Case.Status]",
-                sourcesAudited: "CaseMaster",
-                executionTimeMs: 12
-              }
-            };
-          } else if (lowerResolved.includes("timeline")) {
-            const timelineStr = activeCase.timeline.map(t => `• [${t.date}] ${t.title}: ${t.desc}`).join("\n");
-            matchedResponse = {
-              englishResponse: `Timeline of events for Case ${activeContext.name}:\n${timelineStr}`,
-              kannadaResponse: `ಪ್ರಕರಣ ${activeContext.name} ನ ತನಿಖಾ ಪ್ರಗತಿಯ ಸಮಯಸೂಚಿ ಲಭ್ಯವಿದೆ.`,
-              explainableAI: {
-                sqlQuery: `SELECT * FROM CaseTimeline WHERE CaseMasterID = '${activeCase.id}' ORDER BY EventDate ASC;`,
-                confidenceScore: 0.95,
-                rulesTriggered: "Context-Aware Timeline Builder",
-                sourcesAudited: "CaseTimeline",
-                executionTimeMs: 15
-              }
-            };
-          } else if (lowerResolved.includes("leads") || lowerResolved.includes("lead")) {
-            const leadsStr = activeCase.investigationLeads.map((l, i) => `${i + 1}. ${l}`).join("\n");
-            matchedResponse = {
-              englishResponse: `Investigation leads recommended for Case ${activeContext.name}:\n${leadsStr}`,
-              kannadaResponse: `ಪ್ರಕರಣ ${activeContext.name} ಗೆ ತನಿಖಾ ಶಿಫಾರಸುಗಳು ಲಭ್ಯವಿದೆ.`,
-              explainableAI: {
-                sqlQuery: `SELECT RecommendationText, Confidence FROM AIML_InvestigationLeads WHERE CaseMasterID = '${activeCase.id}';`,
-                confidenceScore: 0.91,
-                rulesTriggered: "Decision Support Rule -> Leads Engine V2",
-                sourcesAudited: "AIML_InvestigationLeads, ModusOperandiIndex",
-                executionTimeMs: 28
-              }
-            };
-          } else if (lowerResolved.includes("similar")) {
-            const similarStr = activeCase.similarCases.join(", ");
-            matchedResponse = {
-              englishResponse: `Identified similar past cases based on matching modus operandi: Case IDs [${similarStr}]. Outcomes: Case ${activeCase.similarCases[0]} resulted in convict sentencing.`,
-              kannadaResponse: `ಇದೇ ರೀತಿಯ ಹಳೆಯ ಪ್ರಕರಣಗಳು ಕಂಡುಬಂದಿವೆ: [${similarStr}].`,
-              explainableAI: {
-                sqlQuery: `SELECT TargetCaseNo, SimilarityScore FROM CaseSimilarityMatrix WHERE SourceCaseNo = '${activeContext.name}' AND SimilarityScore > 0.80;`,
-                confidenceScore: 0.93,
-                rulesTriggered: "Modus Operandi Similarity Matcher",
-                sourcesAudited: "CaseSimilarityMatrix, CaseMaster",
-                executionTimeMs: 31
-              }
-            };
-          }
+    setIsBotTyping(true);
+    callGeminiAPI(contextResolvedQuery)
+      .then((botMessage) => {
+        setIsBotTyping(false);
+        setMessages(prev => [...prev, botMessage]);
+        if (botMessage.explainableAI) {
+          setSelectedAIExplain(botMessage.explainableAI);
         }
-      }
 
-      // 3. Offender Contextual details lookup
-      if (!matchedResponse && activeContext && activeContext.type === 'offender') {
-        const profile = accusedProfiles[activeContext.id];
-        if (profile) {
-          if (lowerResolved.includes("age") || lowerResolved.includes("profile") || lowerResolved.includes("dossier")) {
-            matchedResponse = {
-              englishResponse: `Dossier overview for ${profile.name} (${profile.alias}):\n• Age: ${profile.age}\n• Gender: ${profile.gender}\n• Risk Index: ${profile.riskScore}/100 (${profile.recidivismTier})\n• Total Arrests: ${profile.arrestsCount} times\n• Modus Operandi: ${profile.modusOperandi}\n• Behavioral Profiling: ${profile.behavioralProfile}`,
-              kannadaResponse: `${profile.name}ನ ವಿವರಗಳು:\n• ವಯಸ್ಸು: ${profile.age}\n• ತೀವ್ರತೆ: ${profile.riskScore}/100\n• ಇತಿಹಾಸ: ${profile.modusOperandi}`,
-              explainableAI: {
-                sqlQuery: `SELECT * FROM AccusedDossier WHERE AccusedID = '${profile.id}';`,
-                confidenceScore: 0.99,
-                rulesTriggered: "Contextual Profiler Routing",
-                sourcesAudited: "AccusedDossier, RecidivismAudit",
-                executionTimeMs: 10
-              }
-            };
-          } else if (lowerResolved.includes("financial") || lowerResolved.includes("bank") || lowerResolved.includes("transaction")) {
-            const accounts = profile.bankAccounts.map(a => `• Bank: ${a.bank} (${a.branch}), Account: ${a.accNo}, Balance: ₹${a.balance.toLocaleString()}, Flag: ${a.flag}`).join("\n");
-            matchedResponse = {
-              englishResponse: `Financial accounts audited for suspect ${profile.name}:\n${accounts}`,
-              kannadaResponse: `ಆರೋಪಿ ${profile.name} ನ ಬ್ಯಾಂಕ್ ಖಾತೆಗಳ ವಿವರ ಲಭ್ಯವಿದೆ.`,
-              explainableAI: {
-                sqlQuery: `SELECT * FROM BankAccounts WHERE OwnerName = '${profile.name}';`,
-                confidenceScore: 0.97,
-                rulesTriggered: "Financial Audit Trail Query [FT-03]",
-                sourcesAudited: "BankAccounts, FinancialTransactionLedger",
-                executionTimeMs: 14
-              }
-            };
-          }
-        }
-      }
-
-      // 4. Fallback to keyword matching responses
-      if (!matchedResponse) {
-        matchedResponse = mockChatBotResponses.find(resp => 
-          resp.keywords.some(kw => lowerResolved.includes(kw))
-        );
-      }
-
-      // If still not matched, trigger standard fallback
-      if (!matchedResponse) {
-        matchedResponse = getFallbackResponse(queryText);
-      }
-
-      // Detect and set context from response keywords/contents
-      if (!newContext) {
-        if (lowerResolved.includes("raju") || lowerResolved.includes("rowdy")) {
+        // Context detection
+        let newContext = null;
+        const lowerResponse = botMessage.textEnglish.toLowerCase();
+        if (lowerResponse.includes("raju") || lowerResponse.includes("rowdy")) {
           newContext = { type: 'offender', name: 'Rowdy Raju', id: 'off_01' };
-        } else if (lowerResolved.includes("kiran") || lowerResolved.includes("tech")) {
+        } else if (lowerResponse.includes("kiran") || lowerResponse.includes("tech")) {
           newContext = { type: 'offender', name: 'Kiran Tech', id: 'off_06' };
-        } else if (lowerResolved.includes("sunil") || lowerResolved.includes("fence")) {
+        } else if (lowerResponse.includes("sunil") || lowerResponse.includes("fence")) {
           newContext = { type: 'offender', name: 'Sunil Fence', id: 'off_03' };
-        } else if (lowerResolved.includes("tiger") || lowerResolved.includes("naga")) {
+        } else if (lowerResponse.includes("tiger") || lowerResponse.includes("naga")) {
           newContext = { type: 'offender', name: "Tiger Naga", id: 'off_02' };
-        } else if (lowerResolved.includes("bengaluru") || lowerResolved.includes("bangalore")) {
+        } else if (lowerResponse.includes("sameer") || lowerResponse.includes("chhota")) {
+          newContext = { type: 'offender', name: "Sameer 'Chhota'", id: 'off_05' };
+        } else if (lowerResponse.includes("bengaluru") || lowerResponse.includes("bangalore")) {
           newContext = { type: 'location', name: 'Bengaluru Urban', id: 'Bengaluru Urban' };
-        } else if (lowerResolved.includes("kalaburagi")) {
+        } else if (lowerResponse.includes("kalaburagi")) {
           newContext = { type: 'location', name: 'Kalaburagi', id: 'Kalaburagi' };
         }
-      }
 
-      if (newContext) {
-        setActiveContext(newContext);
-      }
+        if (newContext) {
+          setActiveContext(newContext);
+        }
 
-      const botMessage = {
-        sender: 'bot',
-        textEnglish: matchedResponse.englishResponse,
-        textKannada: matchedResponse.kannadaResponse,
-        explainableAI: matchedResponse.explainableAI
-      };
-
-      setMessages(prev => [...prev, botMessage]);
-      setSelectedAIExplain(matchedResponse.explainableAI);
-
-      // Trigger Speech synthesis of the response text
-      const speakTextStr = language === 'English' ? matchedResponse.englishResponse : matchedResponse.kannadaResponse;
-      speakText(speakTextStr);
-
-    }, 800);
+        const speakTextStr = language === 'English' ? botMessage.textEnglish : botMessage.textKannada;
+        speakText(speakTextStr);
+      })
+      .catch((err) => {
+        console.error("Gemini API error:", err);
+        setApiError(`Gemini API Error: ${err.message}`);
+        setIsBotTyping(false);
+      });
   };
 
   const handleVoiceSearch = () => {
@@ -349,7 +311,6 @@ export default function ChatbotPanel({ user, addAuditLog }) {
   const handlePrint = () => {
     addAuditLog(`Exported Chatbot Dossier Report as PDF`);
     
-    // Inject print metadata info block temporarily in print DOM
     const printInfoDiv = document.createElement("div");
     printInfoDiv.id = "print-ksp-meta";
     printInfoDiv.style.display = "none";
@@ -370,6 +331,8 @@ export default function ChatbotPanel({ user, addAuditLog }) {
     document.getElementById("print-ksp-meta")?.remove();
   };
 
+  const hasApiKey = apiKey || (import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== 'PASTE_YOUR_KEY_HERE');
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '1.5rem', height: 'calc(100vh - 120px)', minHeight: '520px' }}>
       
@@ -377,17 +340,37 @@ export default function ChatbotPanel({ user, addAuditLog }) {
       <div className="glass-panel print-area" style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1.25rem', overflow: 'hidden' }}>
         
         {/* Chat Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '0.75rem', borderBottom: '1px solid hsl(var(--border-color))', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', paddingBottom: '0.75rem', borderBottom: '1px solid hsl(var(--border-color))', marginBottom: '1rem' }}>
           <div>
-            <h3 style={{ fontSize: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h3 style={{ fontSize: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               Conversational Crime Intelligence
               <span className="badge badge-indigo" style={{ fontSize: '0.65rem', padding: '2px 8px' }}>v3.5 Active</span>
             </h3>
-            <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>Integrated natural language parsing & case dossier extraction</span>
+            <span style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>Integrated natural language parsing & case dossier extraction</span>
           </div>
 
           <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
             
+            {/* API Key Toggle Button */}
+            <button
+              onClick={() => setShowApiKeyInput(!showApiKeyInput)}
+              className="btn btn-secondary"
+              style={{
+                padding: '4px 8px',
+                fontSize: '0.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                border: hasApiKey ? '1px solid hsla(var(--color-teal), 0.5)' : '1px solid hsl(var(--border-color))',
+                background: hasApiKey ? 'hsla(var(--color-teal), 0.1)' : 'transparent',
+                color: hasApiKey ? 'hsl(var(--color-teal))' : 'hsl(var(--text-primary))'
+              }}
+              title="Configure Gemini API Key"
+            >
+              <span>🔑</span>
+              <span>{hasApiKey ? 'Live AI Mode' : 'Configure Key'}</span>
+            </button>
+
             {/* Audio Feedback Toggle */}
             <button
               onClick={() => {
@@ -447,8 +430,99 @@ export default function ChatbotPanel({ user, addAuditLog }) {
           </div>
         </div>
 
+        {/* API Key Configuration Dropdown */}
+        {showApiKeyInput && (
+          <div style={{
+            display: 'flex',
+            gap: '0.5rem',
+            alignItems: 'center',
+            background: 'hsla(var(--bg-card-hover), 0.2)',
+            padding: '8px 12px',
+            borderRadius: '8px',
+            border: '1px solid hsl(var(--border-color))',
+            marginBottom: '1rem',
+            animation: 'fadeIn 0.2s ease-in-out'
+          }}>
+            <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', whiteSpace: 'nowrap' }}>Gemini Key:</span>
+            <input
+              type={showKeyText ? 'text' : 'password'}
+              placeholder="Paste Gemini API Key (saved in browser local storage or read from .env)..."
+              value={apiKey}
+              onChange={(e) => {
+                const val = e.target.value.trim();
+                setApiKey(val);
+                if (val) {
+                  localStorage.setItem('VITE_GEMINI_API_KEY', val);
+                } else {
+                  localStorage.removeItem('VITE_GEMINI_API_KEY');
+                }
+              }}
+              style={{
+                flexGrow: 1,
+                background: 'hsl(var(--bg-primary))',
+                border: '1px solid hsl(var(--border-color))',
+                borderRadius: '6px',
+                padding: '4px 8px',
+                fontSize: '0.75rem',
+                color: 'white'
+              }}
+            />
+            {apiKey && (
+              <span style={{ fontSize: '0.65rem', color: 'hsl(var(--color-teal))', whiteSpace: 'nowrap', padding: '2px 4px', background: 'hsla(var(--color-teal), 0.1)', borderRadius: '4px', border: '1px solid hsla(var(--color-teal), 0.2)' }}>
+                ✓ Auto-Saved
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowKeyText(!showKeyText)}
+              className="btn btn-secondary"
+              style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+            >
+              {showKeyText ? 'Hide' : 'Show'}
+            </button>
+            {apiKey && (
+              <button
+                type="button"
+                onClick={() => {
+                  setApiKey('');
+                  localStorage.removeItem('VITE_GEMINI_API_KEY');
+                  addAuditLog('Cleared Gemini API Key');
+                }}
+                className="btn btn-secondary"
+                style={{ padding: '2px 8px', fontSize: '0.7rem', color: 'hsl(var(--color-rose))', border: '1px solid hsla(var(--color-rose), 0.3)' }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+
+        {apiError && (
+          <div style={{
+            color: 'hsl(var(--color-rose))',
+            fontSize: '0.75rem',
+            marginBottom: '1rem',
+            padding: '8px 12px',
+            background: 'hsla(var(--color-rose), 0.1)',
+            borderRadius: '8px',
+            border: '1px solid hsla(var(--color-rose), 0.2)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            animation: 'fadeIn 0.2s'
+          }}>
+            <span>⚠️ {apiError}</span>
+            <button 
+              onClick={() => setApiError('')} 
+              style={{ background: 'none', border: 'none', color: 'hsl(var(--text-secondary))', cursor: 'pointer', fontWeight: 'bold' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Conversation Logs */}
-        <div style={{ flexGrow: 1, overflowY: 'auto', paddingRight: '0.5rem', marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div style={{ flexGrow: 1, minHeight: 0, overflowY: 'auto', paddingRight: '0.5rem', marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {messages.map((msg, index) => {
             const isBot = msg.sender === 'bot';
             return (
@@ -459,7 +533,7 @@ export default function ChatbotPanel({ user, addAuditLog }) {
               }}>
                 {/* Context notification bubble if pronoun resolved */}
                 {!isBot && msg.contextNotification && (
-                  <span style={{ fontSize: '0.7rem', color: 'hsl(var(--color-cyan))', margin: '0 4px 2px 0', opacity: 0.8, fontStyle: 'italic' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'hsl(var(--color-cyan))', margin: '0 4px 2px 0', opacity: 0.8, fontStyle: 'italic' }}>
                     🕵️ {msg.contextNotification}
                   </span>
                 )}
@@ -495,6 +569,27 @@ export default function ChatbotPanel({ user, addAuditLog }) {
               </div>
             );
           })}
+          {isBotTyping && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', animation: 'fadeIn 0.2s ease-in-out' }}>
+              <div style={{
+                maxWidth: '80%',
+                background: 'hsla(var(--bg-card-hover), 0.5)',
+                border: '1px dashed hsl(var(--border-color))',
+                borderRadius: '16px 16px 16px 4px',
+                padding: '0.85rem 1.1rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <span style={{ fontSize: '0.75rem', color: 'hsl(var(--color-cyan))', fontWeight: '600' }}>KSP AI Assistant is scanning CCTNS...</span>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+              </div>
+            </div>
+          )}
           <div ref={chatEndRef} />
         </div>
 
@@ -578,6 +673,16 @@ export default function ChatbotPanel({ user, addAuditLog }) {
 
         {/* Input Bar */}
         <form onSubmit={(e) => { e.preventDefault(); handleSearch(inputValue); }} style={{ display: 'flex', gap: '0.5rem' }}>
+          <input
+            type="text"
+            className="input-control"
+            placeholder={isListening ? 'Listening...' : activeContext ? `Ask follow-up details about ${activeContext.name}...` : 'Search FIR cases, offenders, hotspots, or economic correlations...'}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            disabled={isListening}
+            style={{ flexGrow: 1 }}
+          />
+
           {/* Voice Mic Button */}
           <button
             type="button"
@@ -596,16 +701,6 @@ export default function ChatbotPanel({ user, addAuditLog }) {
               <IconMic />
             )}
           </button>
-
-          <input
-            type="text"
-            className="input-control"
-            placeholder={isListening ? 'Listening...' : activeContext ? `Ask follow-up details about ${activeContext.name}...` : 'Search FIR cases, offenders, hotspots, or economic correlations...'}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            disabled={isListening}
-            style={{ flexGrow: 1 }}
-          />
 
           <button 
             type="submit" 

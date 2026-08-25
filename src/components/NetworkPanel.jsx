@@ -15,18 +15,76 @@ const IconLink = () => (
 );
 
 export default function NetworkPanel({ addAuditLog }) {
+  const [firs, setFirs] = useState(mockFIRs);
+  const [profiles, setProfiles] = useState(accusedProfiles);
+  const [networkLinks, setNetworkLinks] = useState(criminalNetwork.links);
+
   const [selectedFirNo, setSelectedFirNo] = useState("10443"); // Default: Jayanagar Extortion FIR
   const [selectedNodeId, setSelectedNodeId] = useState("off_01"); // Default: Rowdy Raju
   const [searchQuery, setSearchQuery] = useState("");
 
-  const nodes = criminalNetwork.nodes;
+  // States for interactive graph mechanics
+  const [nodePositions, setNodePositions] = useState({});
+  const [draggingNodeId, setDraggingNodeId] = useState(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState(null);
+
+  // Modal, Form, and Toast States
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState("add"); // "add" or "edit"
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [successNotification, setSuccessNotification] = useState("");
+
+  const [formCriminalName, setFormCriminalName] = useState("");
+  const [formAlias, setFormAlias] = useState("");
+  const [formAge, setFormAge] = useState("");
+  const [formGender, setFormGender] = useState("Unknown");
+  const [formRelatedTo, setFormRelatedTo] = useState("");
+  const [formRelationshipType, setFormRelationshipType] = useState("Associate");
+  const [formCustomRelationship, setFormCustomRelationship] = useState("");
+  const [formRelationshipDetails, setFormRelationshipDetails] = useState("");
+  const [suspectSearch, setSuspectSearch] = useState("");
+  const [errors, setErrors] = useState({});
+
+  const handleMouseDown = (e, nodeId) => {
+    e.preventDefault();
+    setDraggingNodeId(nodeId);
+  };
+
+  const handleMouseMove = (e) => {
+    if (!draggingNodeId) return;
+    
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    
+    const x = ((e.clientX - rect.left) / rect.width) * 460;
+    const y = ((e.clientY - rect.top) / rect.height) * 400;
+    
+    const constrainedX = Math.max(20, Math.min(440, x));
+    const constrainedY = Math.max(20, Math.min(380, y));
+
+    setNodePositions(prev => ({
+      ...prev,
+      [draggingNodeId]: { x: constrainedX, y: constrainedY }
+    }));
+  };
+
+  const handleMouseUp = () => {
+    setDraggingNodeId(null);
+  };
+
+  const resetGraphLayout = () => {
+    setNodePositions({});
+    addAuditLog("Reset criminal relationship network graph layout");
+  };
+
+  const nodes = networkLinks;
 
   // Selected FIR info
-  const activeFIR = mockFIRs.find(f => f.caseNo === selectedFirNo) || mockFIRs[0];
-  const selectedSuspect = accusedProfiles[selectedNodeId] || accusedProfiles["off_01"];
+  const activeFIR = firs.find(f => f.caseNo === selectedFirNo) || firs[0];
+  const selectedSuspect = profiles[selectedNodeId] || profiles["off_01"];
 
   // Filter FIR list based on search query
-  const filteredFIRs = mockFIRs.filter(fir => 
+  const filteredFIRs = firs.filter(fir => 
     fir.caseNo.includes(searchQuery) || 
     fir.crimeNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
     fir.accused.some(acc => acc.toLowerCase().includes(searchQuery.toLowerCase())) ||
@@ -55,8 +113,8 @@ export default function NetworkPanel({ addAuditLog }) {
     // 2. Accused/Offender Nodes
     fir.accused.forEach(accName => {
       // Find matching profile in profiles list
-      const profile = Object.values(accusedProfiles).find(p => p.name.includes(accName.split(" ")[0]));
-      if (profile) {
+      const profile = Object.values(profiles).find(p => p.name.includes(accName.split(" ")[0]));
+      if (profile && !profile.relatedTo) {
         peripheralNodes.push({
           id: profile.id,
           name: profile.name,
@@ -115,10 +173,46 @@ export default function NetworkPanel({ addAuditLog }) {
       caseNodes.push(node);
     });
 
+    // 6. Add newly created custom criminals associated with this FIR
+    const newCriminals = Object.values(profiles).filter(p => p.firId === fir.caseNo && p.relatedTo);
+    newCriminals.forEach(profile => {
+      // Transitively position from parent if exists
+      const parentNode = caseNodes.find(n => n.id === profile.relatedTo);
+      let parentX = 230;
+      let parentY = 200;
+      if (parentNode) {
+        parentX = parentNode.x;
+        parentY = parentNode.y;
+      }
+      
+      // Calculate an offset position
+      const offsetAngle = (caseNodes.length * 45) * (Math.PI / 180);
+      const childX = parentX + Math.cos(offsetAngle) * 55;
+      const childY = parentY + Math.sin(offsetAngle) * 55;
+
+      caseNodes.push({
+        id: profile.id,
+        name: profile.name,
+        label: profile.alias || "No Alias",
+        type: "new-criminal",
+        color: "hsl(var(--color-rose))",
+        riskScore: profile.riskScore || 50,
+        size: 18,
+        x: childX,
+        y: childY
+      });
+    });
+
     return caseNodes;
   };
 
-  const caseNodesList = generateCaseNodes(activeFIR);
+  const baseNodesList = generateCaseNodes(activeFIR);
+  const caseNodesList = baseNodesList.map(node => {
+    if (nodePositions[node.id]) {
+      return { ...node, x: nodePositions[node.id].x, y: nodePositions[node.id].y };
+    }
+    return node;
+  });
 
   // Generate dynamic links from case node to all peripheral nodes
   const generateCaseLinks = (nodesList) => {
@@ -143,7 +237,7 @@ export default function NetworkPanel({ addAuditLog }) {
       // Suspect-to-Account link
       if (node.type === "account") {
         // Find corresponding accused profile owner
-        Object.values(accusedProfiles).forEach(profile => {
+        Object.values(profiles).forEach(profile => {
           if (profile.bankAccounts?.some(acc => `acc_${acc.accNo}` === node.id)) {
             const accNode = nodesList.find(n => n.id === profile.id);
             if (accNode) {
@@ -160,19 +254,51 @@ export default function NetworkPanel({ addAuditLog }) {
       }
     });
 
+    // 3. New Criminal to Related Suspect Link
+    const newCriminalNodes = nodesList.filter(n => n.type === "new-criminal");
+    newCriminalNodes.forEach(node => {
+      const profile = profiles[node.id];
+      if (profile && profile.relatedTo) {
+        caseLinks.push({
+          source: profile.relatedTo,
+          target: node.id,
+          type: profile.relationshipType,
+          color: "hsl(var(--color-rose))",
+          isNewRelationship: true
+        });
+      }
+    });
+
     return caseLinks;
   };
 
   const caseLinksList = generateCaseLinks(caseNodesList);
 
+  const isNodeHighlighted = (nodeId) => {
+    if (!hoveredNodeId) return true;
+    if (hoveredNodeId === nodeId) return true;
+    return caseLinksList.some(link => 
+      (link.source === hoveredNodeId && link.target === nodeId) ||
+      (link.source === nodeId && link.target === hoveredNodeId)
+    );
+  };
+
+  const isLinkHighlighted = (link) => {
+    if (!hoveredNodeId) return true;
+    return link.source === hoveredNodeId || link.target === hoveredNodeId;
+  };
+
   const handleFirSelect = (firNo) => {
     setSelectedFirNo(firNo);
-    const fir = mockFIRs.find(f => f.caseNo === firNo);
+    const fir = firs.find(f => f.caseNo === firNo);
     addAuditLog(`Switched network graph context to FIR: ${firNo}`);
+    
+    // Reset positions on FIR selection change
+    setNodePositions({});
     
     // Automatically select the first accused in this FIR for dossier preview
     if (fir && fir.accused.length > 0) {
-      const matchAcc = Object.values(accusedProfiles).find(p => p.name.includes(fir.accused[0].split(" ")[0]));
+      const matchAcc = Object.values(profiles).find(p => p.name.includes(fir.accused[0].split(" ")[0]));
       if (matchAcc) {
         setSelectedNodeId(matchAcc.id);
       }
@@ -180,7 +306,7 @@ export default function NetworkPanel({ addAuditLog }) {
   };
 
   const handleNodeClick = (node) => {
-    if (node.type === "accused") {
+    if (node.type === "accused" || node.type === "new-criminal") {
       setSelectedNodeId(node.id);
       addAuditLog(`Inspected criminal profile: ${node.name}`);
     } else if (node.type === "case") {
@@ -194,6 +320,212 @@ export default function NetworkPanel({ addAuditLog }) {
     if (score > 65) return 'hsl(var(--color-amber))';
     return 'hsl(var(--color-teal))';
   };
+
+  const handleOpenAddModal = () => {
+    setModalMode("add");
+    setFormCriminalName("");
+    setFormAlias("");
+    setFormAge("");
+    setFormGender("Unknown");
+    
+    // Automatically pre-fill 'Related To' with the selected suspect if they exist
+    const initialRelation = selectedNodeId && selectedNodeId !== `case_${selectedFirNo}` && !selectedNodeId.startsWith("acc_") && !selectedNodeId.startsWith("vic_") && !selectedNodeId.startsWith("station_") ? selectedNodeId : "";
+    setFormRelatedTo(initialRelation);
+    setFormRelationshipType("Associate");
+    setFormCustomRelationship("");
+    setFormRelationshipDetails("");
+    setSuspectSearch("");
+    setErrors({});
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (suspect) => {
+    setModalMode("edit");
+    setFormCriminalName(suspect.name);
+    setFormAlias(suspect.alias || "");
+    setFormAge(suspect.age && suspect.age !== "Not provided" ? suspect.age.toString() : "");
+    setFormGender(suspect.gender || "Unknown");
+    setFormRelatedTo(suspect.relatedTo || "");
+    
+    const standardTypes = ["Associate", "Accomplice", "Gang Member", "Leader", "Follower", "Family", "Financial Associate", "Weapon Supplier", "Victim", "Witness", "Rival", "Unknown"];
+    if (standardTypes.includes(suspect.relationshipType)) {
+      setFormRelationshipType(suspect.relationshipType);
+      setFormCustomRelationship("");
+    } else {
+      setFormRelationshipType("Other");
+      setFormCustomRelationship(suspect.relationshipType);
+    }
+    setFormRelationshipDetails(suspect.relationshipDetails && suspect.relationshipDetails !== "Not provided" ? suspect.relationshipDetails : "");
+    setSuspectSearch("");
+    setErrors({});
+    setIsModalOpen(true);
+  };
+
+  const validateForm = () => {
+    const tempErrors = {};
+    if (!formCriminalName.trim()) {
+      tempErrors.name = "Criminal name is required.";
+    }
+    if (!formRelatedTo) {
+      tempErrors.relatedTo = "Please select a related suspect.";
+    }
+    if (!formRelationshipType) {
+      tempErrors.relationshipType = "Please select a relationship type.";
+    } else if (formRelationshipType === "Other" && !formCustomRelationship.trim()) {
+      tempErrors.customRelationship = "Please enter a custom relationship.";
+    }
+    if (formAge && (isNaN(formAge) || parseInt(formAge) < 0 || parseInt(formAge) > 120)) {
+      tempErrors.age = "Please enter a valid age (0-120).";
+    }
+    setErrors(tempErrors);
+    return Object.keys(tempErrors).length === 0;
+  };
+
+  const handleSaveCriminal = () => {
+    if (!validateForm()) return;
+
+    const finalRelationship = formRelationshipType === "Other" ? formCustomRelationship : formRelationshipType;
+
+    if (modalMode === "add") {
+      const newId = `new_off_${Date.now()}`;
+      const newCriminalProfile = {
+        id: newId,
+        name: formCriminalName,
+        alias: formAlias || "Not provided",
+        age: formAge ? parseInt(formAge) : "Not provided",
+        gender: formGender,
+        firId: selectedFirNo,
+        relatedTo: formRelatedTo,
+        relatedToName: profiles[formRelatedTo]?.name || "Unknown",
+        relationshipType: finalRelationship,
+        relationshipDetails: formRelationshipDetails || "Not provided",
+        status: "Active",
+        riskScore: 50,
+        recidivismTier: "Tier 3 - Moderate Risk",
+        modusOperandi: "Not provided",
+        behavioralProfile: "Not provided",
+        tacticalLeads: "Not provided",
+        photoColor: "#EF4444"
+      };
+
+      const newLink = {
+        source: formRelatedTo,
+        target: newId,
+        type: finalRelationship,
+        strength: "Medium",
+        amount: 0,
+        date: new Date().toISOString().split("T")[0]
+      };
+
+      // Update global module imports so other views also see it
+      accusedProfiles[newId] = newCriminalProfile;
+      criminalNetwork.links.push(newLink);
+
+      // Add to FIR accused list if not already
+      const targetFir = mockFIRs.find(f => f.caseNo === selectedFirNo);
+      if (targetFir && !targetFir.accused.includes(formCriminalName)) {
+        targetFir.accused.push(formCriminalName);
+      }
+
+      // Sync state
+      setProfiles({ ...accusedProfiles });
+      setNetworkLinks([...criminalNetwork.links]);
+      setFirs([...mockFIRs]);
+      setSelectedNodeId(newId);
+
+      setSuccessNotification("Criminal added to network successfully.");
+      setTimeout(() => setSuccessNotification(""), 3000);
+      addAuditLog(`Added new criminal: ${formCriminalName} linked to ${newCriminalProfile.relatedToName}`);
+    } else {
+      // Edit Mode
+      const targetProfile = accusedProfiles[selectedNodeId];
+      if (targetProfile) {
+        const oldName = targetProfile.name;
+        targetProfile.name = formCriminalName;
+        targetProfile.alias = formAlias || "Not provided";
+        targetProfile.age = formAge ? parseInt(formAge) : "Not provided";
+        targetProfile.gender = formGender;
+        targetProfile.relatedTo = formRelatedTo;
+        targetProfile.relatedToName = profiles[formRelatedTo]?.name || "Unknown";
+        targetProfile.relationshipType = finalRelationship;
+        targetProfile.relationshipDetails = formRelationshipDetails || "Not provided";
+
+        // Update active FIR's accused array if name changed
+        const targetFir = mockFIRs.find(f => f.caseNo === selectedFirNo);
+        if (targetFir && oldName !== formCriminalName) {
+          targetFir.accused = targetFir.accused.map(acc => acc === oldName ? formCriminalName : acc);
+        }
+
+        // Update corresponding link
+        const targetLink = criminalNetwork.links.find(l => l.target === selectedNodeId);
+        if (targetLink) {
+          targetLink.source = formRelatedTo;
+          targetLink.type = finalRelationship;
+        }
+
+        setProfiles({ ...accusedProfiles });
+        setNetworkLinks([...criminalNetwork.links]);
+        setFirs([...mockFIRs]);
+
+        setSuccessNotification("Criminal details updated successfully.");
+        setTimeout(() => setSuccessNotification(""), 3000);
+        addAuditLog(`Updated criminal link: ${formCriminalName}`);
+      }
+    }
+
+    setIsModalOpen(false);
+  };
+
+  const handleDeleteCriminal = () => {
+    const profileToDelete = accusedProfiles[selectedNodeId];
+    if (!profileToDelete) return;
+    
+    const profileName = profileToDelete.name;
+
+    // 1. Remove profile from accusedProfiles
+    delete accusedProfiles[selectedNodeId];
+    
+    // 2. Remove links from criminalNetwork.links
+    const updatedLinks = criminalNetwork.links.filter(l => l.target !== selectedNodeId && l.source !== selectedNodeId);
+    criminalNetwork.links.length = 0; // Clear array
+    updatedLinks.forEach(link => criminalNetwork.links.push(link)); // Re-populate
+    
+    // 3. Remove name from active FIR's accused array
+    const targetFir = mockFIRs.find(f => f.caseNo === selectedFirNo);
+    if (targetFir) {
+      targetFir.accused = targetFir.accused.filter(acc => acc !== profileName);
+    }
+
+    // 4. Update state
+    setProfiles({ ...accusedProfiles });
+    setNetworkLinks([...criminalNetwork.links]);
+    setFirs([...mockFIRs]);
+
+    // 5. Select default node
+    if (targetFir && targetFir.accused.length > 0) {
+      const matchAcc = Object.values(accusedProfiles).find(p => p.name.includes(targetFir.accused[0].split(" ")[0]));
+      if (matchAcc) {
+        setSelectedNodeId(matchAcc.id);
+      } else {
+        setSelectedNodeId("off_01");
+      }
+    } else {
+      setSelectedNodeId("off_01");
+    }
+
+    setIsDeleteConfirmOpen(false);
+    setSuccessNotification("Criminal removed from network successfully.");
+    setTimeout(() => setSuccessNotification(""), 3000);
+    addAuditLog(`Removed criminal profile: ${profileName}`);
+  };
+
+  // Lists for Related To suspect options
+  const availableRelations = caseNodesList.filter(n => n.type === "accused" || n.type === "new-criminal");
+  const filteredRelations = availableRelations.filter(n => n.id !== selectedNodeId);
+  const matchingRelations = filteredRelations.filter(n => 
+    n.name.toLowerCase().includes(suspectSearch.toLowerCase()) ||
+    (n.label && n.label.toLowerCase().includes(suspectSearch.toLowerCase()))
+  );
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1.2fr 1fr', gap: '1.25rem', height: 'calc(100vh - 120px)', minHeight: '520px' }}>
@@ -254,14 +586,47 @@ export default function NetworkPanel({ addAuditLog }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', borderBottom: '1px solid hsl(var(--border-color))', paddingBottom: '0.5rem' }}>
           <div>
             <h3 style={{ fontSize: '1.1rem', fontFamily: 'var(--font-display)' }}>FIR Relationship Model</h3>
-            <span style={{ fontSize: '0.72rem', color: 'hsl(var(--text-muted))' }}>Click center folder or peripheral circles to inspect</span>
+            <span style={{ fontSize: '0.72rem', color: 'hsl(var(--text-muted))' }}>Click and drag circles to adjust layout. Hover to highlight connections.</span>
           </div>
-          <span className="badge badge-indigo" style={{ fontSize: '0.65rem' }}>FIR Centered</span>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button 
+              onClick={() => handleOpenAddModal()}
+              className="btn btn-primary"
+              style={{ 
+                padding: '4px 8px', 
+                fontSize: '0.65rem', 
+                borderRadius: '4px',
+                background: 'hsl(var(--color-indigo))',
+                color: 'white',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '2px',
+                fontWeight: 'bold'
+              }}
+            >
+              <span>+ Add Criminal</span>
+            </button>
+            <button 
+              onClick={resetGraphLayout}
+              className="btn btn-secondary"
+              style={{ padding: '4px 8px', fontSize: '0.65rem', borderRadius: '4px', border: '1px solid hsl(var(--border-color))' }}
+            >
+              Align Rings
+            </button>
+          </div>
         </div>
 
         {/* Network SVG Canvas */}
         <div style={{ flexGrow: 1, display: 'flex', alignItems: 'center', justifyItems: 'center', background: 'rgba(5, 8, 15, 0.4)', borderRadius: '12px', padding: '0.5rem', border: '1px solid hsl(var(--border-color))' }}>
-          <svg viewBox="0 0 460 400" style={{ width: '100%', height: '100%', maxHeight: '340px' }}>
+          <svg 
+            viewBox="0 0 460 400" 
+            style={{ width: '100%', height: '100%', maxHeight: '340px' }}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          >
             
             {/* Draw Links/Lines */}
             {caseLinksList.map((link, idx) => {
@@ -270,24 +635,47 @@ export default function NetworkPanel({ addAuditLog }) {
               
               if (!startNode || !endNode) return null;
 
+              const isHighlighted = isLinkHighlighted(link);
+              const isAccountLink = link.target.startsWith('acc_');
+              const isNewRelationship = link.isNewRelationship;
+
               return (
-                <g key={`link-${idx}`}>
+                <g key={`link-${idx}`} style={{ transition: 'opacity 0.2s' }} opacity={isHighlighted ? 1 : 0.15}>
                   <line
                     x1={startNode.x}
                     y1={startNode.y}
                     x2={endNode.x}
                     y2={endNode.y}
                     stroke={link.color}
-                    strokeWidth={1.5}
+                    strokeWidth={isNewRelationship ? 2 : 1.5}
                     strokeDasharray={link.isDashed ? '3 3' : '0'}
                   />
+                  
+                  {/* Glowing animated flows for Audited Accounts */}
+                  {isAccountLink && isHighlighted && (
+                    <line
+                      x1={startNode.x}
+                      y1={startNode.y}
+                      x2={endNode.x}
+                      y2={endNode.y}
+                      stroke="hsl(var(--color-teal))"
+                      strokeWidth={2.5}
+                      strokeDasharray="6 6"
+                      strokeDashoffset="12"
+                      style={{
+                        animation: 'dash 1s linear infinite',
+                        filter: 'drop-shadow(0 0 3px hsl(var(--color-teal)))'
+                      }}
+                    />
+                  )}
+                  
                   {/* Link type tag */}
                   <text
                     x={(startNode.x + endNode.x) / 2}
-                    y={(startNode.y + endNode.y) / 2 - 3}
+                    y={(startNode.y + endNode.y) / 2 - 4}
                     fill="hsl(var(--text-muted))"
                     textAnchor="middle"
-                    style={{ fontSize: '0.5rem', pointerEvents: 'none' }}
+                    style={{ fontSize: '0.48rem', pointerEvents: 'none', fontWeight: '500' }}
                   >
                     {link.type}
                   </text>
@@ -298,7 +686,9 @@ export default function NetworkPanel({ addAuditLog }) {
             {/* Draw Nodes */}
             {caseNodesList.map((node) => {
               const isCenter = node.type === "case";
+              const isNewCriminal = node.type === "new-criminal";
               const isSelectedAccused = node.id === selectedNodeId;
+              const isHighlighted = isNodeHighlighted(node.id);
               
               let borderStroke = isCenter ? 'hsl(var(--color-indigo))' : 'rgba(255,255,255,0.2)';
               let filterGlow = 'none';
@@ -306,6 +696,9 @@ export default function NetworkPanel({ addAuditLog }) {
               if (isSelectedAccused) {
                 borderStroke = 'white';
                 filterGlow = 'drop-shadow(0 0 6px hsla(var(--color-indigo), 0.5))';
+              } else if (isNewCriminal) {
+                borderStroke = 'hsl(var(--color-rose))';
+                filterGlow = 'drop-shadow(0 0 4px hsla(var(--color-rose), 0.3))';
               }
 
               return (
@@ -313,14 +706,27 @@ export default function NetworkPanel({ addAuditLog }) {
                   key={node.id} 
                   transform={`translate(${node.x}, ${node.y})`} 
                   onClick={() => handleNodeClick(node)}
-                  style={{ cursor: 'pointer', transition: 'all 0.2s' }}
+                  onMouseDown={(e) => handleMouseDown(e, node.id)}
+                  onMouseEnter={() => setHoveredNodeId(node.id)}
+                  onMouseLeave={() => setHoveredNodeId(null)}
+                  style={{ cursor: 'pointer', transition: 'transform 0.1s, opacity 0.2s' }}
+                  opacity={isHighlighted ? 1 : 0.2}
                 >
+                  <title>
+                    {isNewCriminal ? (
+                      `${node.name}\nAlias: ${node.label}\nRelationship: ${profiles[node.id]?.relationshipType}\nRelated to: ${profiles[node.id]?.relatedToName}\nFIR: ${profiles[node.id]?.firId}`
+                    ) : (
+                      `${node.name}${node.label ? ` (${node.label})` : ""}`
+                    )}
+                  </title>
+                  
                   {/* Main Circle */}
                   <circle
                     r={node.size}
                     fill="hsl(var(--bg-card))"
-                    stroke={isCenter ? "white" : isSelectedAccused ? "white" : node.color}
+                    stroke={isCenter ? "white" : isSelectedAccused ? "white" : borderStroke}
                     strokeWidth={isSelectedAccused || isCenter ? 2.5 : 1.25}
+                    strokeDasharray={isNewCriminal ? "3 1" : "0"}
                     style={{ filter: filterGlow }}
                   />
 
@@ -431,7 +837,344 @@ export default function NetworkPanel({ addAuditLog }) {
           </p>
         </div>
 
+        {/* Relationship Details Display */}
+        {selectedSuspect.relatedTo && (
+          <div style={{ borderTop: '1px solid hsl(var(--border-color))', paddingTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <span style={{ fontSize: '0.7rem', color: 'hsl(var(--color-rose))', fontWeight: 'bold', display: 'block' }}>RELATIONSHIP DOSSIER LINK</span>
+            <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+              <div><span style={{ color: 'hsl(var(--text-muted))' }}>Relationship:</span> <strong style={{ color: 'white' }}>{selectedSuspect.relationshipType}</strong></div>
+              <div><span style={{ color: 'hsl(var(--text-muted))' }}>Related To:</span> <strong style={{ color: 'white' }}>{selectedSuspect.relatedToName}</strong></div>
+              <div><span style={{ color: 'hsl(var(--text-muted))' }}>FIR Case:</span> <strong style={{ color: 'white' }}>FIR {selectedSuspect.firId}</strong></div>
+            </div>
+            <div>
+              <strong style={{ color: 'hsl(var(--color-rose))', display: 'block', fontSize: '0.72rem', marginBottom: '2px' }}>Relationship Details</strong>
+              <p style={{ color: 'hsl(var(--text-secondary))', lineHeight: '1.35', background: 'rgba(255,255,255,0.02)', padding: '6px 10px', borderRadius: '6px', border: '1px solid hsl(var(--border-color))', fontSize: '0.75rem' }}>
+                {selectedSuspect.relationshipDetails || "Not provided"}
+              </p>
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+              <button
+                onClick={() => handleOpenEditModal(selectedSuspect)}
+                className="btn btn-secondary"
+                style={{ flexGrow: 1, padding: '6px 12px', fontSize: '0.75rem', borderRadius: '6px', border: '1px solid hsl(var(--border-color))', cursor: 'pointer', background: 'hsla(var(--bg-card-hover), 0.5)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+              >
+                ✏️ Edit Link
+              </button>
+              <button
+                onClick={() => setIsDeleteConfirmOpen(true)}
+                className="btn btn-secondary"
+                style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: '6px', border: '1px solid hsla(var(--color-rose), 0.3)', color: 'hsl(var(--color-rose))', cursor: 'pointer', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+              >
+                🗑️ Remove
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
+
+      {/* Add/Edit Criminal Modal Overlay */}
+      {isModalOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(5px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'hsl(var(--bg-card))',
+            border: '1px solid hsl(var(--border-color))',
+            borderRadius: '12px',
+            width: '100%',
+            maxWidth: '480px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            padding: '1.5rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+            animation: 'fadeIn 0.2s ease-out'
+          }}>
+            <div style={{ borderBottom: '1px solid hsl(var(--border-color))', paddingBottom: '0.5rem', display: 'flex', justifyItems: 'center', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ fontSize: '1.1rem', fontFamily: 'var(--font-display)', color: 'white', margin: 0 }}>
+                {modalMode === "add" ? "Add Criminal to Network" : "Edit Criminal Network Link"}
+              </h3>
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                style={{ background: 'transparent', border: 'none', color: 'hsl(var(--text-muted))', fontSize: '1.2rem', cursor: 'pointer' }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              
+              {/* FIR Case (Read-Only) */}
+              <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span>FIR Case (Read-Only)</span>
+                <input
+                  type="text"
+                  readOnly
+                  value={`FIR ${selectedFirNo} (${activeFIR.crimeNo})`}
+                  className="input-control"
+                  style={{ fontSize: '0.75rem', padding: '6px 8px', background: 'rgba(255,255,255,0.03)', color: 'hsl(var(--text-muted))', border: '1px solid hsl(var(--border-color))', borderRadius: '6px' }}
+                />
+              </label>
+
+              {/* Criminal Name */}
+              <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span>Criminal Name *</span>
+                <input
+                  type="text"
+                  placeholder="Enter criminal name (e.g. Ramesh Kumar)"
+                  value={formCriminalName}
+                  onChange={(e) => setFormCriminalName(e.target.value)}
+                  className="input-control"
+                  style={{ fontSize: '0.75rem', padding: '6px 8px', border: errors.name ? '1px solid hsl(var(--color-rose))' : '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white' }}
+                />
+                {errors.name && <span style={{ color: 'hsl(var(--color-rose))', fontSize: '0.65rem' }}>{errors.name}</span>}
+              </label>
+
+              {/* Alias */}
+              <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span>Alias</span>
+                <input
+                  type="text"
+                  placeholder="Enter alias (e.g. Ramu)"
+                  value={formAlias}
+                  onChange={(e) => setFormAlias(e.target.value)}
+                  className="input-control"
+                  style={{ fontSize: '0.75rem', padding: '6px 8px', border: '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white' }}
+                />
+              </label>
+
+              {/* Age & Gender */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span>Age</span>
+                  <input
+                    type="number"
+                    placeholder="e.g. 28"
+                    value={formAge}
+                    onChange={(e) => setFormAge(e.target.value)}
+                    className="input-control"
+                    style={{ fontSize: '0.75rem', padding: '6px 8px', border: errors.age ? '1px solid hsl(var(--color-rose))' : '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white' }}
+                  />
+                  {errors.age && <span style={{ color: 'hsl(var(--color-rose))', fontSize: '0.65rem' }}>{errors.age}</span>}
+                </label>
+
+                <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span>Gender</span>
+                  <select
+                    value={formGender}
+                    onChange={(e) => setFormGender(e.target.value)}
+                    className="input-control"
+                    style={{ fontSize: '0.75rem', padding: '6px 8px', border: '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white' }}
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                    <option value="Unknown">Unknown</option>
+                  </select>
+                </label>
+              </div>
+
+              {/* Related To (Searchable Dropdown) */}
+              <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span>Related To *</span>
+                <input
+                  type="text"
+                  placeholder="🔍 Search suspect in active network..."
+                  value={suspectSearch}
+                  onChange={(e) => setSuspectSearch(e.target.value)}
+                  className="input-control"
+                  style={{ fontSize: '0.75rem', padding: '5px 8px', border: '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white', marginBottom: '2px' }}
+                />
+                <select
+                  value={formRelatedTo}
+                  onChange={(e) => setFormRelatedTo(e.target.value)}
+                  className="input-control"
+                  style={{ fontSize: '0.75rem', padding: '6px 8px', border: errors.relatedTo ? '1px solid hsl(var(--color-rose))' : '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white' }}
+                >
+                  <option value="">-- Select Related Suspect --</option>
+                  {matchingRelations.map(n => (
+                    <option key={n.id} value={n.id}>
+                      {n.name} {n.label ? `(${n.label})` : ""}
+                    </option>
+                  ))}
+                </select>
+                {errors.relatedTo && <span style={{ color: 'hsl(var(--color-rose))', fontSize: '0.65rem' }}>{errors.relatedTo}</span>}
+              </label>
+
+              {/* Relationship Type */}
+              <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span>Relationship Type *</span>
+                <select
+                  value={formRelationshipType}
+                  onChange={(e) => setFormRelationshipType(e.target.value)}
+                  className="input-control"
+                  style={{ fontSize: '0.75rem', padding: '6px 8px', border: errors.relationshipType ? '1px solid hsl(var(--color-rose))' : '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white' }}
+                >
+                  <option value="Associate">Associate</option>
+                  <option value="Accomplice">Accomplice</option>
+                  <option value="Gang Member">Gang Member</option>
+                  <option value="Leader">Leader</option>
+                  <option value="Follower">Follower</option>
+                  <option value="Family">Family</option>
+                  <option value="Financial Associate">Financial Associate</option>
+                  <option value="Weapon Supplier">Weapon Supplier</option>
+                  <option value="Victim">Victim</option>
+                  <option value="Witness">Witness</option>
+                  <option value="Rival">Rival</option>
+                  <option value="Unknown">Unknown</option>
+                  <option value="Other">Other (Custom)...</option>
+                </select>
+                {errors.relationshipType && <span style={{ color: 'hsl(var(--color-rose))', fontSize: '0.65rem' }}>{errors.relationshipType}</span>}
+              </label>
+
+              {/* Custom Relationship Type (If Other selected) */}
+              {formRelationshipType === "Other" && (
+                <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span>Custom Relationship Type *</span>
+                  <input
+                    type="text"
+                    placeholder="Enter custom relationship (e.g. Weapon Supplier)"
+                    value={formCustomRelationship}
+                    onChange={(e) => setFormCustomRelationship(e.target.value)}
+                    className="input-control"
+                    style={{ fontSize: '0.75rem', padding: '6px 8px', border: errors.customRelationship ? '1px solid hsl(var(--color-rose))' : '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white' }}
+                  />
+                  {errors.customRelationship && <span style={{ color: 'hsl(var(--color-rose))', fontSize: '0.65rem' }}>{errors.customRelationship}</span>}
+                </label>
+              )}
+
+              {/* Relationship Details */}
+              <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span>Relationship Details</span>
+                <textarea
+                  placeholder="Describe how this person is connected to the selected suspect..."
+                  value={formRelationshipDetails}
+                  onChange={(e) => setFormRelationshipDetails(e.target.value)}
+                  className="input-control"
+                  rows="3"
+                  style={{ fontSize: '0.75rem', padding: '6px 8px', border: '1px solid hsl(var(--border-color))', borderRadius: '6px', background: 'hsl(var(--bg-primary))', color: 'white', resize: 'vertical' }}
+                />
+              </label>
+
+            </div>
+
+            {/* Modal Buttons */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', borderTop: '1px solid hsl(var(--border-color))', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
+              <button 
+                type="button" 
+                onClick={() => setIsModalOpen(false)}
+                className="btn btn-secondary"
+                style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: '6px', border: '1px solid hsl(var(--border-color))', cursor: 'pointer', background: 'transparent', color: 'white' }}
+              >
+                Cancel
+              </button>
+              <button 
+                type="button" 
+                onClick={handleSaveCriminal}
+                className="btn btn-primary"
+                style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: '6px', background: 'hsl(var(--color-indigo))', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                {modalMode === "add" ? "Add Criminal" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal Overlay */}
+      {isDeleteConfirmOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.8)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1050
+        }}>
+          <div style={{
+            background: 'hsl(var(--bg-card))',
+            border: '1px solid hsla(var(--color-rose), 0.3)',
+            borderRadius: '10px',
+            width: '100%',
+            maxWidth: '380px',
+            padding: '1.25rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            animation: 'fadeIn 0.15s ease-out'
+          }}>
+            <h4 style={{ fontSize: '1rem', color: 'hsl(var(--color-rose))', margin: 0, fontWeight: 'bold' }}>
+              ⚠️ Remove Criminal?
+            </h4>
+            <p style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', margin: 0, lineHeight: '1.4' }}>
+              Are you sure you want to remove <strong>{selectedSuspect.name}</strong> and their relationship from the selected FIR network?
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.25rem' }}>
+              <button
+                type="button"
+                onClick={() => setIsDeleteConfirmOpen(false)}
+                className="btn btn-secondary"
+                style={{ padding: '6px 12px', fontSize: '0.72rem', borderRadius: '6px', border: '1px solid hsl(var(--border-color))', cursor: 'pointer', background: 'transparent', color: 'white' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteCriminal}
+                className="btn btn-primary"
+                style={{ padding: '6px 12px', fontSize: '0.72rem', borderRadius: '6px', background: 'hsl(var(--color-rose))', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Notification Alert */}
+      {successNotification && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          background: 'hsl(var(--color-teal))',
+          color: 'white',
+          padding: '10px 20px',
+          borderRadius: '8px',
+          fontSize: '0.8rem',
+          fontWeight: 'bold',
+          zIndex: 1100,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          animation: 'fadeIn 0.3s ease-in-out',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px'
+        }}>
+          <span>✓</span>
+          <span>{successNotification}</span>
+        </div>
+      )}
 
     </div>
   );
